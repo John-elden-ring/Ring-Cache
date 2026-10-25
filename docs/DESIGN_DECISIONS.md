@@ -68,21 +68,31 @@ This document records the architectural decisions, trade-offs, alternatives cons
 
 ## ADR-004: TCP Protocol and Message Framing
 
-- **Status**: Proposed
-- **Context**: Nodes must communicate with clients and peer nodes reliably over the network. The wire protocol must be efficient, lightweight, and resilient to packet fragmentation.
-- **Proposed Decision**: Implement a length-prefixed binary framing protocol over stream-oriented TCP:
-  - Header: Fixed-size header containing a Magic Byte (1B), Message Type/Command (1B: `GET`, `SET`, `DEL`, `RESPONSE`), Flags (2B), Request ID (4B), and Payload Length (4B).
-  - Payload: Command-specific arguments or serialized key/value data.
+- **Status**: Accepted
+- **Context**: Cache nodes must communicate with clients and peer nodes reliably over stream-oriented TCP. The wire protocol must be efficient, simple to parse, safe against malformed frames, and resilient to TCP segmentation and packet fragmentation.
+- **Decision**: Implement a bounded newline-delimited JSON wire protocol over TCP using standalone Asio and Modern JSON (`nlohmann::json`):
+  - **Frame Delimiter**: Each request and response message is encoded as a single-line UTF-8 JSON object terminated by a newline character (`\n`).
+  - **Bounded Framing**: A hard limit of 64 KB (65,536 bytes) per frame is strictly enforced during stream reading and parsing. If an incoming message exceeds 64 KB before a newline delimiter is received, or if parsing fails, the connection safely rejects the frame with an error response (or drops the connection) rather than allocating unbounded memory.
+  - **Request Format**:
+    - `op`: Command string (`"PUT"`, `"GET"`, `"DELETE"`, `"PING"`).
+    - `key`: Target cache key (string).
+    - `value`: Target cache value (string, used for `"PUT"`).
+    - `requestId`: Optional correlation identifier (string/integer).
+  - **Response Format**:
+    - `status`: Result indicator (`"OK"`, `"NOT_FOUND"`, `"ERR"`, `"PONG"`).
+    - `value`: Optional returned value string (for successful `"GET"`).
+    - `message`: Diagnostic error or status description.
+    - `requestId`: Echoed correlation identifier.
+  - **Error Handling**: Implemented using non-throwing parsing functions (`parseRequest`, `parseResponse`) that catch `nlohmann::json::parse_error` or missing required fields and return `std::nullopt` instead of leaking exceptions across the asynchronous network boundary.
 - **Alternatives Considered**:
-  - *Text-based protocol (RESP / Redis-compatible)*: Easy to debug via Telnet/Netcat and compatible with existing Redis tools, but incurs text-parsing and tokenizing overhead.
-  - *HTTP/REST*: Simple to integrate with web clients, but high header overhead and parsing latency for a high-performance in-memory cache.
-  - *gRPC / Protocol Buffers*: Strongly typed and schema-driven, but introduces heavy external library dependencies.
+  - *Length-prefixed binary framing*: Extremely compact and eliminates delimiter scanning, but requires dedicated debugging tools and complicates inspection. Delimited JSON was adopted for Milestone 5 because it provides human-readable wire debugging while bounded parsing prevents memory exhaustion.
+  - *RESP (Redis Serialization Protocol)*: Compatible with existing Redis tooling, but adds parser complexity for custom replication and routing metadata.
+  - *gRPC / Protocol Buffers*: Introduces heavy external dependencies and build complexities not warranted for a lightweight C++17 cache.
 - **Trade-offs**:
-  - Length-prefixed binary framing minimizes parsing overhead, eliminates delimiter escaping, and allows pre-allocating read buffers.
-  - Binary protocols are less convenient to inspect via standard command-line tools without dedicated CLI tooling.
-- **Unresolved Questions**:
-  - Should we support a lightweight ASCII/RESP compatibility fallback for debugging and benchmarking with tools like `memtier_benchmark` or `redis-benchmark`?
-  - What maximum payload and frame size limits should be enforced to prevent denial-of-service allocations?
+  - JSON encoding introduces slight serialization and deserialization overhead compared to raw binary framing.
+  - Human readability, ease of testing via command-line utilities, and safe bounds provide superior developer experience and operational transparency.
+- **Validation**:
+  - Validated in `tests/test_protocol.cpp` and `tests/test_network_integration.cpp`: round-trip serialization and deserialization of all operations, strict rejection of frames exceeding 64 KB, handling of malformed and partial JSON payloads, empty keys/values, and network disconnects.
 
 ---
 
@@ -111,21 +121,22 @@ This document records the architectural decisions, trade-offs, alternatives cons
 
 ## ADR-006: Concurrency and Threading Architecture
 
-- **Status**: Proposed
-- **Context**: The cache server must scale across modern multi-core processors, handling thousands of concurrent client connections and high operations-per-second (OPS).
-- **Proposed Decision**: Employ an asynchronous non-blocking event-driven network I/O model (worker thread pool or thread-per-core) coupled with a partitioned/sharded cache storage engine:
-  - Storage is split into $S$ independent hash buckets/stripes (e.g., $S = 64\text{–}256$), each protected by its own reader-writer lock (`std::shared_mutex`).
-  - Read/write operations hash the key to determine the specific stripe, drastically reducing lock contention across concurrent worker threads.
+- **Status**: Accepted
+- **Context**: Cache node daemons and networked routers must handle multiple concurrent TCP connections, client requests, and replica updates without race conditions, thread starvation, or deadlock.
+- **Decision**: Employ an asynchronous event-driven I/O model backed by standalone Asio with a configurable worker thread pool:
+  - **Server Concurrency (`TcpServer`)**: The server runs an `asio::io_context` serviced by $T$ worker threads (configurable via `--threads`, default `std::thread::hardware_concurrency()`). Each client connection is managed by a distinct `TcpSession` using asynchronous reads and writes.
+  - **Zero Lock Holding During I/O**: Network sockets are read and written asynchronously without holding any cache storage locks. Locks are only acquired during the sub-microsecond cache access within `CacheNode` / `LruCache`.
+  - **Storage Synchronization**: Each node's in-memory storage is safeguarded by the internal mutex of `LruCache` (or `CacheNode`), guaranteeing serialized, thread-safe updates to the doubly-linked LRU list and hash table.
+  - **Client Concurrency (`NetworkClient` & `NetworkClusterRouter`)**: `NetworkClient` provides thread-safe synchronous socket operations protected by a `std::recursive_mutex`. It utilizes non-blocking socket connect with timeout via `select()` and `SO_ERROR` verification, avoiding Windows IOCP cancellation hangs. `NetworkClusterRouter` utilizes `HashRing` reader-writer locking (`std::shared_mutex`) during key lookup and routes TCP requests to destination endpoints.
 - **Alternatives Considered**:
-  - *Single-Threaded Event Loop (Redis model)*: Zero lock contention and simple implementation, but leaves multi-core CPUs underutilized without deploying multiple instances per host.
-  - *Single Global Mutex*: Simple to implement initially, but quickly becomes a performance bottleneck under multi-threaded network I/O.
-  - *Completely Lock-Free Hash Map*: Complex to implement correctly in C++17 with dynamic resizing and LRU list updates without memory reclamation hazards.
+  - *Single-Threaded Event Loop*: Minimizes synchronization, but underutilizes multi-core CPUs for concurrent JSON serialization and network parsing.
+  - *Thread-Per-Connection*: Spawns a dedicated thread per connection; does not scale to thousands of concurrent idle or keepalive connections.
+  - *Sharded / Partitioned Lock Striping*: Divides cache into stripes. Deferred to future optimization milestones; the current thread-safe `LruCache` mutex provides sufficient throughput with simple correctness guarantees.
 - **Trade-offs**:
-  - Lock striping achieves high concurrency and throughput across multiple threads while keeping implementation complexity manageable.
-  - Cross-stripe operations (e.g., global size calculation, bulk flush) require acquiring multiple stripe locks in a strict deterministic order to prevent deadlocks.
-- **Unresolved Questions**:
-  - What networking abstraction should be used? (Native platform sockets with non-blocking I/O vs. an established cross-platform library like Asio).
-  - How will memory limits be enforced globally across independently striped LRU segments?
+  - Thread pool running asynchronous Asio handlers requires careful lifetime management (`std::enable_shared_from_this`) to prevent use-after-free when sockets disconnect abruptly.
+  - Decoupling network I/O from storage locking ensures maximum server responsiveness.
+- **Validation**:
+  - Validated in `tests/test_network_integration.cpp`: concurrent multi-process round-trips, concurrent request execution across worker threads, graceful shutdown on `SIGINT`/`SIGTERM`, and clean error propagation on peer process termination.
 
 ---
 

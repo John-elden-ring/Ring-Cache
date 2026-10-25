@@ -4,6 +4,8 @@ add_executable(ringcache_tests
     test_hash_ring.cpp
     test_lru_cache.cpp
     test_cluster_router.cpp
+    test_protocol.cpp
+    test_network_integration.cpp
 )
 
 target_link_libraries(ringcache_tests

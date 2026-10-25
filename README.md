@@ -3,7 +3,7 @@
 RingCache is a planned distributed, in-memory key-value cache engineered in C++17. It utilizes **consistent hashing** with virtual nodes to distribute keys predictably across multiple cache nodes while minimizing key remapping during cluster scaling or node churn.
 
 > **Project Status: In Development**  
-> Core C++17 consistent hash ring with virtual nodes and automated test suite are implemented. Storage engine and networking components are planned for subsequent milestones.
+> Core C++17 consistent hash ring with virtual nodes, in-memory LRU cache, single-process cluster simulation, multi-process TCP cache daemon (`ringcache_node`), networked client router (`NetworkClusterRouter`), and interactive CLI (`ringcache_cli`) are implemented and verified.
 
 ---
 
@@ -26,28 +26,33 @@ Consistent hashing addresses this challenge by mapping both cache keys and physi
 RingCache is designed around modular, decoupled components:
 
 ```
-[ Client Request (GET / SET / DEL) ]
-                │
-                ▼
-      ┌──────────────────┐
-      │ Consistent Hash  │  Maps key to ring position;
-      │       Ring       │  identifies primary and replica nodes.
-      └─────────┬────────┘
-                │
-         TCP Framing / RPC
-                │
-                ▼
-     ┌─────────────────────┐
-     │   Storage Engine    │  In-memory hash table (std::unordered_map)
-     │   & LRU Eviction    │  backed by doubly-linked list for O(1) eviction.
-     └─────────────────────┘
+[ Client / CLI (PUT / GET / DELETE / PING) ]
+                     │
+                     ▼
+          ┌──────────────────────┐
+          │ NetworkClusterRouter │  Consistent hash ring with virtual nodes;
+          │    (Client Side)     │  routes to primary & R-1 successor replicas.
+          └──────────┬───────────┘
+                     │  TCP (Bounded JSON Wire Protocol)
+                     ▼
+          ┌──────────────────────┐
+          │   TcpServer / Node   │  Asynchronous Asio worker pool;
+          │ (ringcache_node.exe) │  bounded frames (<= 64 KB);
+          └──────────┬───────────┘  zero storage locks during network I/O.
+                     │
+                     ▼
+          ┌──────────────────────┐
+          │      CacheNode       │  Thread-safe in-memory LRU cache engine
+          │   (LruCache Store)   │  backed by std::list and std::unordered_map.
+          └──────────────────────┘
 ```
 
 1. **Consistent Hash Ring**: Maintains node positions across the 64-bit identifier space. Keys are assigned to the first node whose token is greater than or equal to the key's hash (wrapping around at the end of the ring).
-2. **Virtual Nodes**: Each physical node registers multiple virtual nodes (tokens) across the ring to ensure statistically even key distribution.
-3. **Storage Engine & Eviction**: A thread-safe in-memory key-value store (`LruCache`) using an LRU (Least Recently Used) policy to discard oldest entries when capacity limits are reached.
-4. **Networking & Framing (Planned)**: A lightweight TCP server utilizing length-prefixed binary framing for request and response commands (`GET`, `SET`, `DEL`), as proposed in [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md).
-5. **Multi-Node Routing & Replication**: Orchestrates in-process nodes (`ClusterRouter`) using consistent hash routing, successor replication across $R$ nodes, and replica fallback reads.
+2. **Virtual Nodes**: Each physical node registers multiple virtual nodes (tokens, default 150) across the ring to ensure statistically even key distribution.
+3. **Storage Engine & LRU Eviction**: Thread-safe in-memory key-value store (`LruCache`) using an exact LRU (Least Recently Used) policy to discard oldest entries when capacity limits are reached.
+4. **TCP Protocol & Framing**: Bounded newline-delimited JSON wire protocol over TCP using standalone Asio. Enforces a strict 64 KB maximum frame size and non-throwing error handling.
+5. **Multi-Node Routing & Replication**: Orchestrates nodes using consistent hash routing, clockwise successor replication across $R$ nodes, and replica fallback reads (in-memory `ClusterRouter` and networked `NetworkClusterRouter`).
+6. **Daemon & CLI Executables**: Standalone cache daemon process (`ringcache_node`) and cluster CLI client (`ringcache_cli`).
 
 ---
 
@@ -62,7 +67,7 @@ RingCache is designed around modular, decoupled components:
 | **LRU Cache Engine** | Implemented | Thread-safe `LruCache` with $O(1)$ `get`, `put`, and `remove` backed by `std::list` and `std::unordered_map` |
 | **Thread-Safe Storage** | Implemented | Mutex synchronization ensuring zero data races across concurrent reads and mutations |
 | **Multi-Node Replication** | Implemented | In-process multi-node cluster (`ClusterRouter`) with configurable successor replication factor $R$ and replica fallback read routing |
-| **TCP Protocol & Framing** | Planned | Non-blocking socket communication with length-prefixed binary commands |
+| **TCP Protocol & Multi-Process** | Implemented | Asynchronous TCP server (`TcpServer`), client router (`NetworkClusterRouter`), bounded JSON wire protocol, `ringcache_node` daemon, and `ringcache_cli` |
 | **Node Failure Detection** | Planned | Heartbeat probes and dynamic ring membership updates |
 
 ---
@@ -82,7 +87,7 @@ Building RingCache requires:
 RingCache uses standard, target-based CMake workflows:
 
 ### Building
-Configure and build all targets (the `ringcache` library and `ringcache_tests` test runner):
+Configure and build all targets (`ringcache` library, `ringcache_node` daemon, `ringcache_cli` client, and `ringcache_tests`):
 
 ```bash
 # Configure the build directory (Release mode)
@@ -94,8 +99,42 @@ cmake --build build
 
 *(On Windows with MinGW, append `-G Ninja -DCMAKE_CXX_COMPILER=g++` if your default environment requires it).*
 
-### Running
-The cache server daemon binary (e.g., `ringcache_server`) will be introduced in Milestone 3. The current milestone provides the foundational `ringcache` C++17 library target and automated test suite.
+### Running Multi-Process Cache Nodes
+
+Launch cache node processes with custom identifiers, listen ports, and capacities:
+
+```bash
+# Terminal 1: Launch Node 1
+./build/ringcache_node --id node-1 --host 127.0.0.1 --port 18001 --capacity 1000
+
+# Terminal 2: Launch Node 2
+./build/ringcache_node --id node-2 --host 127.0.0.1 --port 18002 --capacity 1000
+
+# Terminal 3: Launch Node 3
+./build/ringcache_node --id node-3 --host 127.0.0.1 --port 18003 --capacity 1000
+```
+
+### Interacting via the CLI
+
+Use `ringcache_cli` to route requests across the cluster with consistent hashing and successor replication:
+
+```bash
+# Health-check / ping a node
+./build/ringcache_cli ping --peers node-1=127.0.0.1:18001
+
+# Store a key replicated across R=2 distinct physical nodes
+./build/ringcache_cli put mykey "Hello RingCache" \
+    --peers node-1=127.0.0.1:18001,node-2=127.0.0.1:18002,node-3=127.0.0.1:18003 \
+    --replicas 2
+
+# Retrieve a key (queries primary, falls back to replica if needed)
+./build/ringcache_cli get mykey \
+    --peers node-1=127.0.0.1:18001,node-2=127.0.0.1:18002,node-3=127.0.0.1:18003
+
+# Delete a key from primary and all replicas
+./build/ringcache_cli del mykey \
+    --peers node-1=127.0.0.1:18001,node-2=127.0.0.1:18002,node-3=127.0.0.1:18003
+```
 
 ### Testing
 Execute the automated test suite using CTest:
@@ -105,7 +144,7 @@ Execute the automated test suite using CTest:
 ctest --test-dir build --output-on-failure
 ```
 
-You can also run the test executable directly to inspect individual test cases:
+You can also run the test executable directly to inspect individual test cases (41 unit and integration tests covering consistent hashing, LRU eviction, cluster routing, bounded wire protocol, and multi-process TCP networking):
 
 ```bash
 # Linux / macOS
@@ -123,7 +162,7 @@ You can also run the test executable directly to inspect individual test cases:
 - [x] **Milestone 2 (Consistent Hashing)**: Consistent hashing ring implementation with virtual node distribution and automated test verification.
 - [x] **Milestone 3 (Storage Engine)**: In-memory LRU cache engine (`LruCache`) with $O(1)$ operations, capacity bounding, and verified thread safety.
 - [x] **Milestone 4 (Cluster Routing & Replication)**: In-process multi-node cluster router (`ClusterRouter`, `CacheNode`), consistent hash routing with configurable successor replication factor $R$, and fallback reads.
-- [ ] **Milestone 5 (Networking & Framing)**: Network transport layer, binary framing, CLI client, and server executable.
+- [x] **Milestone 5 (Networking & Multi-Process Distribution)**: TCP network transport layer, bounded JSON wire protocol, `ringcache_node` daemon process, `ringcache_cli` client tool, and `NetworkClusterRouter` with successor replication and multi-process integration tests.
 - [ ] **Milestone 6 (Clustering & Failure Detection)**: Multi-node cluster failure detection, heartbeat probes, and dynamic membership churn handling.
 
 ---
