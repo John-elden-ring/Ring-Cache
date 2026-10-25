@@ -2,6 +2,7 @@ add_executable(ringcache_tests
     test_main.cpp
     test_version.cpp
     test_hash_ring.cpp
+    test_lru_cache.cpp
 )
 
 target_link_libraries(ringcache_tests

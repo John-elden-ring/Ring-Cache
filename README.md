@@ -45,7 +45,7 @@ RingCache is designed around modular, decoupled components:
 
 1. **Consistent Hash Ring**: Maintains node positions across the 64-bit identifier space. Keys are assigned to the first node whose token is greater than or equal to the key's hash (wrapping around at the end of the ring).
 2. **Virtual Nodes**: Each physical node registers multiple virtual nodes (tokens) across the ring to ensure statistically even key distribution.
-3. **Storage Engine & Eviction (Planned)**: A thread-safe in-memory key-value store using an LRU (Least Recently Used) policy to discard oldest entries when capacity limits are reached.
+3. **Storage Engine & Eviction**: A thread-safe in-memory key-value store (`LruCache`) using an LRU (Least Recently Used) policy to discard oldest entries when capacity limits are reached.
 4. **Networking & Framing (Planned)**: A lightweight TCP server utilizing length-prefixed binary framing for request and response commands (`GET`, `SET`, `DEL`), as proposed in [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md).
 5. **Replication (Planned)**: Successor-based replication across $R$ successive nodes on the ring to preserve cache availability during transient node failures.
 
@@ -59,8 +59,8 @@ RingCache is designed around modular, decoupled components:
 | **Repository & CI Baseline** | Implemented | Documentation, issue templates, agent standards, GitHub Actions CI workflow |
 | **Consistent Hash Ring** | Implemented | Thread-safe `HashRing` using `std::map` binary search ($O(\log(N \times V))$) and deterministic 64-bit hashing |
 | **Virtual Nodes (vnodes)** | Implemented | Configurable vnodes per physical node (default 150) for uniform key partitioning |
-| **LRU Cache Engine** | Planned | $O(1)$ lookup, insertion, and eviction with memory bounding |
-| **Thread-Safe Storage** | Planned | Reader-writer locks (`std::shared_mutex`) or lock striping |
+| **LRU Cache Engine** | Implemented | Thread-safe `LruCache` with $O(1)$ `get`, `put`, and `remove` backed by `std::list` and `std::unordered_map` |
+| **Thread-Safe Storage** | Implemented | Mutex synchronization ensuring zero data races across concurrent reads and mutations |
 | **TCP Protocol & Framing** | Planned | Non-blocking socket communication with length-prefixed binary commands |
 | **Multi-Node Replication** | Planned | Asynchronous / semi-synchronous successor replication |
 | **Node Failure Detection** | Planned | Heartbeat probes and dynamic ring membership updates |
@@ -120,10 +120,10 @@ You can also run the test executable directly to inspect individual test cases:
 ## Development Roadmap
 
 - [x] **Milestone 1 (Foundation)**: Minimal CMake project skeleton, library target (`ringcache`), and automated test suite (`ringcache_tests`).
-- [ ] **Milestone 1 (Storage Engine)**: Core single-node in-memory storage engine with LRU eviction and thread safety.
-- [x] **Milestone 2**: Consistent hashing ring implementation with virtual node distribution and automated test verification.
-- [ ] **Milestone 3**: Network transport layer, binary framing, CLI client, and server executable.
-- [ ] **Milestone 4**: Multi-node clustering, replication factor, and node membership churn handling.
+- [x] **Milestone 2 (Consistent Hashing)**: Consistent hashing ring implementation with virtual node distribution and automated test verification.
+- [x] **Milestone 3 (Storage Engine)**: In-memory LRU cache engine (`LruCache`) with $O(1)$ operations, capacity bounding, and verified thread safety.
+- [ ] **Milestone 4 (Networking & Framing)**: Network transport layer, binary framing, CLI client, and server executable.
+- [ ] **Milestone 5 (Clustering & Replication)**: Multi-node clustering, replication factor, and node membership churn handling.
 
 ---
 

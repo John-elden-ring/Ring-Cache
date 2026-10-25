@@ -6,6 +6,7 @@
 namespace ringcache::test {
 std::vector<TestCase> getVersionTests();
 std::vector<TestCase> getHashRingTests();
+std::vector<TestCase> getLruCacheTests();
 } // namespace ringcache::test
 
 int main() {
@@ -16,6 +17,9 @@ int main() {
 
     const auto hashRingTests = ringcache::test::getHashRingTests();
     allTests.insert(allTests.end(), hashRingTests.begin(), hashRingTests.end());
+
+    const auto lruCacheTests = ringcache::test::getLruCacheTests();
+    allTests.insert(allTests.end(), lruCacheTests.begin(), lruCacheTests.end());
 
     int passed = 0;
     int failed = 0;

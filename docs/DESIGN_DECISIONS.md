@@ -47,22 +47,22 @@ This document records the architectural decisions, trade-offs, alternatives cons
 
 ## ADR-003: Storage Engine and LRU Eviction Policy
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Context**: Each cache node requires an efficient in-memory storage engine that enforces a hard memory ceiling and discards entries when capacity is saturated.
-- **Proposed Decision**: Implement an exact Least Recently Used (LRU) eviction engine using a hash table (`std::unordered_map`) mapping keys to iterators of a doubly-linked list (`std::list`) containing key-value pairs.
-  - Read/Write: Moves the accessed entry to the head of the list ($O(1)$).
-  - Eviction: Removes entries from the tail of the list ($O(1)$).
-  - Memory Tracking: Track byte size of keys and values upon insert/update/erase to enforce memory limits rather than raw entry counts.
+- **Decision**: Implement an exact Least Recently Used (LRU) eviction engine using a hash table (`std::unordered_map`) mapping keys to iterators of a doubly-linked list (`std::list`) containing key-value pairs (`ringcache::BasicLruCache` / `ringcache::LruCache`).
+  - Read/Write: Moves the accessed entry to the head of the list ($O(1)$) using `std::list::splice` without invalidating iterators.
+  - Eviction: Removes entries from the tail of the list ($O(1)$) when capacity is exceeded.
+  - Concurrency: Synchronized using an internal `std::mutex` ensuring thread safety across concurrent readers and writers, as read operations mutate access recency.
+  - Zero Capacity: Safely defined as a no-op that rejects all insertions and returns `std::nullopt` on retrieval.
 - **Alternatives Considered**:
   - *Sampled LRU (Redis approach)*: Randomly samples $K$ keys and evicts the oldest among them. Reduces memory overhead and lock contention on read paths, but provides approximate eviction.
   - *Clock / Second-Chance Eviction*: Uses a circular buffer with a reference bit.
   - *LFU (Least Frequently Used)*: Tracks frequency rather than recency; more complex to implement and susceptible to stale frequency accumulation.
 - **Trade-offs**:
-  - Exact LRU provides predictable, optimal recency eviction.
-  - Maintaining node order requires mutating the doubly-linked list on *read* operations, necessitating exclusive write locking or fine-grained lock striping even for `GET` requests unless access order updates are buffered or batched.
-- **Unresolved Questions**:
-  - Should read-path list promotions be batched/coalesced or moved to lock-free ring buffers to avoid write locks on `GET`?
-  - Will keys and values be stored in contiguous arenas/pools to mitigate heap fragmentation?
+  - Exact LRU provides predictable, optimal recency eviction and stable $O(1)$ operations.
+  - Maintaining node order requires mutating the doubly-linked list on *read* operations, requiring mutual exclusion locking across all accesses.
+- **Validation**:
+  - Validated in Milestone 3 unit tests: exact LRU eviction order, access recency changes, capacity 0/1 handling, empty key/value support, and high-contention multi-threaded concurrent access with zero data races.
 
 ---
 

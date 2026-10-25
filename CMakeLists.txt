@@ -16,6 +16,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_library(ringcache
     src/hash.cpp
     src/hash_ring.cpp
+    src/lru_cache.cpp
     src/version.cpp
 )
 
