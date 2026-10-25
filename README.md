@@ -2,8 +2,8 @@
 
 RingCache is a planned distributed, in-memory key-value cache engineered in C++17. It utilizes **consistent hashing** with virtual nodes to distribute keys predictably across multiple cache nodes while minimizing key remapping during cluster scaling or node churn.
 
-> **Project Status: Proposed / Pre-Alpha**  
-> The architecture and design specifications are currently being established. No runtime cache binaries or networking components are implemented yet.
+> **Project Status: In Development**  
+> Core C++17 consistent hash ring with virtual nodes and automated test suite are implemented. Storage engine and networking components are planned for subsequent milestones.
 
 ---
 
@@ -15,13 +15,13 @@ $$\text{node} = \text{hash}(\text{key}) \pmod N$$
 
 While straightforward, adding or removing a node from an $N$-node cluster forces approximately $\frac{N}{N+1}$ of all keys to relocate. In high-throughput systems, this triggers severe cache miss storms, heavy database failover load, and latency spikes.
 
-Consistent hashing addresses this challenge by mapping both cache keys and physical nodes to a circular hash ring ($[0, 2^{32} - 1]$ or $[0, 2^{64} - 1]$). When a node is added or removed:
+Consistent hashing addresses this challenge by mapping both cache keys and physical nodes to a circular hash ring ($[0, 2^{64} - 1]$). When a node is added or removed:
 - Only keys belonging to the immediate successor node are redistributed ($\approx \frac{K}{N}$ keys on average, where $K$ is the total number of keys).
 - Virtual nodes (vnodes) are introduced to prevent hash clustering, ensuring balanced load and uniform memory consumption across physical machines.
 
 ---
 
-## Proposed Architecture
+## Architecture Overview
 
 RingCache is designed around modular, decoupled components:
 
@@ -43,10 +43,10 @@ RingCache is designed around modular, decoupled components:
      └─────────────────────┘
 ```
 
-1. **Consistent Hash Ring**: Maintains node positions across the identifier space. Keys are assigned to the first node whose token is greater than or equal to the key's hash (wrapping around at the end of the ring).
+1. **Consistent Hash Ring**: Maintains node positions across the 64-bit identifier space. Keys are assigned to the first node whose token is greater than or equal to the key's hash (wrapping around at the end of the ring).
 2. **Virtual Nodes**: Each physical node registers multiple virtual nodes (tokens) across the ring to ensure statistically even key distribution.
-3. **Storage Engine & Eviction**: A thread-safe in-memory key-value store using an LRU (Least Recently Used) policy to discard oldest entries when capacity limits are reached.
-4. **Networking & Framing**: A lightweight TCP server utilizing length-prefixed binary framing for request and response commands (`GET`, `SET`, `DEL`), as proposed in [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md).
+3. **Storage Engine & Eviction (Planned)**: A thread-safe in-memory key-value store using an LRU (Least Recently Used) policy to discard oldest entries when capacity limits are reached.
+4. **Networking & Framing (Planned)**: A lightweight TCP server utilizing length-prefixed binary framing for request and response commands (`GET`, `SET`, `DEL`), as proposed in [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md).
 5. **Replication (Planned)**: Successor-based replication across $R$ successive nodes on the ring to preserve cache availability during transient node failures.
 
 ---
@@ -55,33 +55,34 @@ RingCache is designed around modular, decoupled components:
 
 | Feature | Status | Notes |
 | :--- | :--- | :--- |
-| **Consistent Hash Ring** | Planned | Ring structure and binary search lookup (`std::map` or sorted vector) |
-| **Virtual Nodes (vnodes)** | Planned | Configurable vnode factor per physical node |
+| **CMake Build System & Tests** | Implemented | C++17 target-based CMake, `ringcache` library, and automated `ringcache_tests` |
+| **Repository & CI Baseline** | Implemented | Documentation, issue templates, agent standards, GitHub Actions CI workflow |
+| **Consistent Hash Ring** | Implemented | Thread-safe `HashRing` using `std::map` binary search ($O(\log(N \times V))$) and deterministic 64-bit hashing |
+| **Virtual Nodes (vnodes)** | Implemented | Configurable vnodes per physical node (default 150) for uniform key partitioning |
 | **LRU Cache Engine** | Planned | $O(1)$ lookup, insertion, and eviction with memory bounding |
 | **Thread-Safe Storage** | Planned | Reader-writer locks (`std::shared_mutex`) or lock striping |
 | **TCP Protocol & Framing** | Planned | Non-blocking socket communication with length-prefixed binary commands |
 | **Multi-Node Replication** | Planned | Asynchronous / semi-synchronous successor replication |
 | **Node Failure Detection** | Planned | Heartbeat probes and dynamic ring membership updates |
-| **Repository & CI Baseline** | Implemented (Baseline) | Documentation, issue templates, agent standards, CI workflow skeleton |
 
 ---
 
 ## Prerequisites
 
-Building RingCache will require:
+Building RingCache requires:
 - **C++ Compiler**: C++17 compliant (GCC 9+, Clang 10+, or MSVC 2019+)
 - **Build System**: CMake 3.16 or higher
-- **Build Tool**: Ninja (recommended) or GNU Make
-- **Testing**: CTest / GoogleTest or Catch2 (to be integrated in Milestone 1)
+- **Build Tool**: Ninja (recommended) or GNU Make / MSBuild
+- **Testing**: CTest (included with CMake)
 
 ---
 
-## Build, Run, and Testing (Planned)
+## Build, Run, and Testing
 
-> **Current Repository State**: The repository currently contains documentation, engineering guidelines, and GitHub workflows. The core `CMakeLists.txt` build configuration and target implementations are planned for Milestone 1. Invoking `cmake` or build tools before Milestone 1 will fail with `CMakeLists.txt not found`.
+RingCache uses standard, target-based CMake workflows:
 
-### Planned Build Instructions
-Once `CMakeLists.txt` is introduced in Milestone 1, standard CMake commands will configure and build the project:
+### Building
+Configure and build all targets (the `ringcache` library and `ringcache_tests` test runner):
 
 ```bash
 # Configure the build directory (Release mode)
@@ -91,23 +92,36 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-### Planned Run Instructions
-The cache server binary (e.g., `ringcache_server`) will be introduced in Milestone 3. Execution instructions, configuration file formats, and CLI parameter specifications (such as listening port, memory capacity, and peer addresses) will be documented with validated examples once the executable target is implemented.
+*(On Windows with MinGW, append `-G Ninja -DCMAKE_CXX_COMPILER=g++` if your default environment requires it).*
 
-### Planned Testing Instructions
-Once test targets are defined in `CMakeLists.txt`, tests will be executed via CTest:
+### Running
+The cache server daemon binary (e.g., `ringcache_server`) will be introduced in Milestone 3. The current milestone provides the foundational `ringcache` C++17 library target and automated test suite.
+
+### Testing
+Execute the automated test suite using CTest:
 
 ```bash
 # Execute test suite with verbose output on failure
 ctest --test-dir build --output-on-failure
 ```
 
+You can also run the test executable directly to inspect individual test cases:
+
+```bash
+# Linux / macOS
+./build/tests/ringcache_tests
+
+# Windows
+.\build\tests\ringcache_tests.exe
+```
+
 ---
 
 ## Development Roadmap
 
-- [ ] **Milestone 1**: Minimal CMake skeleton, unit test harness, and single-node in-memory storage engine with LRU eviction and thread safety.
-- [ ] **Milestone 2**: Consistent hashing ring implementation with virtual node distribution benchmarks.
+- [x] **Milestone 1 (Foundation)**: Minimal CMake project skeleton, library target (`ringcache`), and automated test suite (`ringcache_tests`).
+- [ ] **Milestone 1 (Storage Engine)**: Core single-node in-memory storage engine with LRU eviction and thread safety.
+- [x] **Milestone 2**: Consistent hashing ring implementation with virtual node distribution and automated test verification.
 - [ ] **Milestone 3**: Network transport layer, binary framing, CLI client, and server executable.
 - [ ] **Milestone 4**: Multi-node clustering, replication factor, and node membership churn handling.
 

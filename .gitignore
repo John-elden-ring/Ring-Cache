@@ -1,0 +1,16 @@
+# Build artifacts
+build/
+bin/
+lib/
+*.obj
+*.o
+*.a
+*.exe
+
+# IDE / Editor
+.vscode/
+.idea/
+*.user
+
+# CMake user files
+CMakeUserPresets.json

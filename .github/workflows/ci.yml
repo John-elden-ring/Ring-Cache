@@ -33,23 +33,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build clang
 
-      - name: Configure, Build, and Test
+      - name: Configure CMake
         run: |
-          # Verify CMakeLists.txt is present before invoking CMake
-          if [ ! -f "CMakeLists.txt" ]; then
-            echo "::warning ::CMakeLists.txt is not yet present. Skipping build and test execution until Milestone 1 CMake skeleton is committed."
-            exit 0
-          fi
-
-          echo "Configuring project with C++17 and CMake..."
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=17 \
             -DCMAKE_C_COMPILER=${{ matrix.cc }} \
-            -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+            -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
+            -DBUILD_TESTING=ON
 
-          echo "Building targets..."
-          cmake --build build
+      - name: Build targets
+        run: |
+          cmake --build build --target ringcache ringcache_tests
 
-          echo "Executing test suite..."
+      - name: Execute test suite
+        run: |
           ctest --test-dir build --output-on-failure
