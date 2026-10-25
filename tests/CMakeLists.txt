@@ -27,3 +27,4 @@ else()
 endif()
 
 add_test(NAME ringcache_tests COMMAND ringcache_tests)
+set_tests_properties(ringcache_tests PROPERTIES TIMEOUT 180)

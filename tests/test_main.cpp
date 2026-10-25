@@ -14,7 +14,14 @@ std::vector<TestCase> getFailureResilienceTests();
 std::vector<TestCase> getClientTests();
 } // namespace ringcache::test
 
+#ifndef _WIN32
+#include <csignal>
+#endif
+
 int main() {
+#ifndef _WIN32
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
     std::vector<ringcache::test::TestCase> allTests;
 
     const auto versionTests = ringcache::test::getVersionTests();

@@ -66,8 +66,11 @@ struct ChildProcess {
             return false;
         }
         if (p == 0) {
-            // Child process
-            execl("/bin/sh", "sh", "-c", commandLine.c_str(), (char*)nullptr);
+            // Put child process in its own process group
+            setpgid(0, 0);
+            // Prefix with exec so /bin/sh is replaced by the node process
+            std::string execCmd = "exec " + commandLine;
+            execl("/bin/sh", "sh", "-c", execCmd.c_str(), (char*)nullptr);
             _exit(1);
         }
         pid = p;
@@ -89,9 +92,30 @@ struct ChildProcess {
         }
 #else
         if (pid > 0) {
+            // Signal the entire process group and the process directly
+            kill(-pid, SIGTERM);
             kill(pid, SIGTERM);
-            int status = 0;
-            waitpid(pid, &status, 0);
+
+            // Bounded wait using WNOHANG to avoid indefinite hangs
+            auto start = std::chrono::steady_clock::now();
+            bool exited = false;
+            while (std::chrono::steady_clock::now() - start < std::chrono::milliseconds(1500)) {
+                int status = 0;
+                pid_t res = waitpid(pid, &status, WNOHANG);
+                if (res == pid || res == -1) {
+                    exited = true;
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            }
+
+            // Force kill if process did not exit within timeout
+            if (!exited) {
+                kill(-pid, SIGKILL);
+                kill(pid, SIGKILL);
+                int status = 0;
+                waitpid(pid, &status, 0);
+            }
             pid = -1;
         }
 #endif
