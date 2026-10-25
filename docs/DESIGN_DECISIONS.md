@@ -161,19 +161,38 @@ This document records the architectural decisions, trade-offs, alternatives cons
 
 ## ADR-008: Testing Strategy and Fault Simulation
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Context**: Distributed caching systems suffer from subtle failure modes, including race conditions, data races, unbalanced key distributions, and partition edge cases.
-- **Proposed Decision**: Implement a three-tiered testing methodology:
-  1. *Unit Testing*: Test isolated components (LRU list, hash ring token placement, binary frame decoder, memory counters) using modern unit tests.
-  2. *Distribution & Statistical Verification*: Dedicated tests measuring key distribution uniformity, variance, and redistribution percentages across simulated node additions and removals.
-  3. *Concurrency & Sanitizer Suite*: Stress tests running concurrent readers and writers under AddressSanitizer (ASan), ThreadSanitizer (TSan), and UndefinedBehaviorSanitizer (UBSan).
-  4. *Integration / Cluster Simulation*: Multi-node in-process or containerized tests simulating packet delays, dropped connections, and abrupt node terminations.
+- **Decision**: Implement a multi-tiered testing methodology:
+  1. *Unit Testing*: Test isolated components (LRU list, hash ring token placement, protocol serialization, versioning) using deterministic unit tests.
+  2. *Distribution & Statistical Verification*: Dedicated tests measuring key distribution uniformity, variance, and redistribution percentages across node additions and removals.
+  3. *Concurrency & Multi-Threaded Verification*: In-process multi-threaded server testing and thread-safe routing without data races.
+  4. *Multi-Process Cluster Simulation & Failure Resilience*: Real multi-process cluster tests executing over TCP loopback sockets, validating primary termination with replica fallback, dead primary write rejection under static topology, node restart with auto-reconnection, and timeout handling.
 - **Alternatives Considered**:
   - *End-to-End Blackbox Testing Only*: Validates system as a whole, but makes identifying concurrency bugs and memory leaks significantly harder.
   - *Unit Tests Only*: Fails to catch distributed timing issues, race conditions, and network framing anomalies.
 - **Trade-offs**:
-  - Thorough testing infrastructure requires upfront investment in mockable network abstractions and deterministic time/scheduling controls.
-  - Guarantees high stability, correctness, and confidence prior to production deployment.
-- **Unresolved Questions**:
-  - Which testing framework should be adopted for unit tests (GoogleTest vs. Catch2 vs. doctest)?
-  - How will cluster integration tests be automated in CI without introducing slow running times?
+  - Multi-process integration tests require managing OS child processes and ephemeral ports, but guarantee true end-to-end network fidelity.
+- **Validation**:
+  - Validated in `tests/test_failure_resilience.cpp` and `tests/test_network_integration.cpp`: clean replica fallback upon primary kill, write degradation on unreachable primary, automatic client reconnection on node restart, and bounded timeouts.
+
+---
+
+## ADR-009: Benchmarking Harness & Performance Analysis Methodology
+
+- **Status**: Accepted
+- **Context**: Evaluating distributed cache throughput, latency distribution, and scalability under varying concurrency levels, node counts, replication factors, and workload mixes requires an accurate, low-overhead load generator.
+- **Decision**: Provide a standalone benchmark executable (`ringcache_bench`) and Python automation runner (`scripts/run_benchmarks.py`):
+  - **Client Concurrency**: Each concurrent client worker thread instantiates its own `NetworkClusterRouter` with dedicated TCP sockets, avoiding client-side socket lock serialization and fully stressing the multi-threaded server worker pool.
+  - **Monotonic High-Precision Timing**: All durations are measured using `std::chrono::steady_clock`. Latencies are recorded in thread-local vectors in microseconds ($\mu\text{s}$), eliminating lock contention during measurement.
+  - **Percentile Calculation**: Latency distributions are sorted post-run and evaluated using the 0-indexed nearest-rank method: $\text{rank}(P) = \lfloor \frac{P}{100} \times (N - 1) \rfloor$ for $p50$, $p95$, and $p99$.
+  - **Warm-Up Phase**: Configurable key pre-population (`--warmup`) ensures read operations measure actual cache hits rather than empty-cache misses.
+  - **Machine-Readable Logging**: Performance metrics and experiment parameters are written to CSV format (`--out`).
+- **Alternatives Considered**:
+  - *External Generic Tools (memtier / redis-benchmark)*: Would require implementing full Redis/Memcached protocol compatibility.
+  - *Shared Single-Router Client*: Contends on a single client-side socket lock per node, measuring client mutex bottleneck rather than server throughput.
+- **Trade-offs**:
+  - In-repo standalone tool provides exact protocol compatibility and zero external dependencies, but requires maintaining the benchmark CLI.
+- **Validation**:
+  - Validated with live multi-process cluster experiments across concurrency scaling ($C=1..8$), replication cost ($R=1$ vs $R=2$), and workload ratios, logged in `benchmark_results.csv`.
+

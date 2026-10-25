@@ -3,7 +3,7 @@
 RingCache is a planned distributed, in-memory key-value cache engineered in C++17. It utilizes **consistent hashing** with virtual nodes to distribute keys predictably across multiple cache nodes while minimizing key remapping during cluster scaling or node churn.
 
 > **Project Status: In Development**  
-> Core C++17 consistent hash ring with virtual nodes, in-memory LRU cache, single-process cluster simulation, multi-process TCP cache daemon (`ringcache_node`), networked client router (`NetworkClusterRouter`), and interactive CLI (`ringcache_cli`) are implemented and verified.
+> Core C++17 consistent hash ring with virtual nodes, in-memory LRU cache, single-process cluster simulation, multi-process TCP cache daemon (`ringcache_node`), networked client router (`NetworkClusterRouter`), interactive CLI (`ringcache_cli`), standalone benchmark harness (`ringcache_bench`), and failure resilience test suite are implemented and verified.
 
 ---
 
@@ -26,7 +26,7 @@ Consistent hashing addresses this challenge by mapping both cache keys and physi
 RingCache is designed around modular, decoupled components:
 
 ```
-[ Client / CLI (PUT / GET / DELETE / PING) ]
+[ Client / CLI / Benchmark (PUT / GET / DELETE / PING) ]
                      │
                      ▼
           ┌──────────────────────┐
@@ -52,7 +52,7 @@ RingCache is designed around modular, decoupled components:
 3. **Storage Engine & LRU Eviction**: Thread-safe in-memory key-value store (`LruCache`) using an exact LRU (Least Recently Used) policy to discard oldest entries when capacity limits are reached.
 4. **TCP Protocol & Framing**: Bounded newline-delimited JSON wire protocol over TCP using standalone Asio. Enforces a strict 64 KB maximum frame size and non-throwing error handling.
 5. **Multi-Node Routing & Replication**: Orchestrates nodes using consistent hash routing, clockwise successor replication across $R$ nodes, and replica fallback reads (in-memory `ClusterRouter` and networked `NetworkClusterRouter`).
-6. **Daemon & CLI Executables**: Standalone cache daemon process (`ringcache_node`) and cluster CLI client (`ringcache_cli`).
+6. **Daemon, CLI, & Benchmark Executables**: Standalone cache daemon process (`ringcache_node`), cluster CLI client (`ringcache_cli`), and standalone load generator (`ringcache_bench`).
 
 ---
 
@@ -68,7 +68,9 @@ RingCache is designed around modular, decoupled components:
 | **Thread-Safe Storage** | Implemented | Mutex synchronization ensuring zero data races across concurrent reads and mutations |
 | **Multi-Node Replication** | Implemented | In-process multi-node cluster (`ClusterRouter`) with configurable successor replication factor $R$ and replica fallback read routing |
 | **TCP Protocol & Multi-Process** | Implemented | Asynchronous TCP server (`TcpServer`), client router (`NetworkClusterRouter`), bounded JSON wire protocol, `ringcache_node` daemon, and `ringcache_cli` |
-| **Node Failure Detection** | Planned | Heartbeat probes and dynamic ring membership updates |
+| **Benchmarking & Latency Profiling** | Implemented | Standalone `ringcache_bench` CLI, monotonic clocks, $p50/p95/p99$ percentiles, and machine-readable CSV logging |
+| **Failure & Resilience Testing** | Implemented | Deterministic failure test suite (`test_failure_resilience.cpp`) validating read replica fallback, restart reconnect, and timeout bounds |
+| **Dynamic Membership & Gossip** | Planned | Decentralized heartbeat probes, dynamic ring membership churn handling, and background key re-balancing |
 
 ---
 
@@ -136,6 +138,26 @@ Use `ringcache_cli` to route requests across the cluster with consistent hashing
     --peers node-1=127.0.0.1:18001,node-2=127.0.0.1:18002,node-3=127.0.0.1:18003
 ```
 
+### Benchmarking & Performance Profiling
+
+Run high-throughput multi-threaded benchmarks against the multi-process cluster:
+
+```bash
+# Execute standalone benchmark with 4 concurrent client threads and p50/p95/p99 profiling
+./build/ringcache_bench --peers node-1=127.0.0.1:18001,node-2=127.0.0.1:18002,node-3=127.0.0.1:18003 \
+    --requests 10000 \
+    --clients 4 \
+    --keys 1000 \
+    --ratio 80:20:0 \
+    --rep 1 \
+    --out benchmark_results.csv
+
+# Or run automated multi-process experiments using the Python runner
+python scripts/run_benchmarks.py --matrix --out benchmark_results.csv
+```
+
+See [docs/BENCHMARKING.md](docs/BENCHMARKING.md) for detailed methodology, percentile calculations, and failure resilience semantics.
+
 ### Testing
 Execute the automated test suite using CTest:
 
@@ -144,7 +166,7 @@ Execute the automated test suite using CTest:
 ctest --test-dir build --output-on-failure
 ```
 
-You can also run the test executable directly to inspect individual test cases (41 unit and integration tests covering consistent hashing, LRU eviction, cluster routing, bounded wire protocol, and multi-process TCP networking):
+You can also run the test executable directly to inspect individual test cases (45 unit and integration tests covering consistent hashing, LRU eviction, cluster routing, bounded wire protocol, multi-process TCP networking, and failure resilience):
 
 ```bash
 # Linux / macOS
@@ -163,7 +185,8 @@ You can also run the test executable directly to inspect individual test cases (
 - [x] **Milestone 3 (Storage Engine)**: In-memory LRU cache engine (`LruCache`) with $O(1)$ operations, capacity bounding, and verified thread safety.
 - [x] **Milestone 4 (Cluster Routing & Replication)**: In-process multi-node cluster router (`ClusterRouter`, `CacheNode`), consistent hash routing with configurable successor replication factor $R$, and fallback reads.
 - [x] **Milestone 5 (Networking & Multi-Process Distribution)**: TCP network transport layer, bounded JSON wire protocol, `ringcache_node` daemon process, `ringcache_cli` client tool, and `NetworkClusterRouter` with successor replication and multi-process integration tests.
-- [ ] **Milestone 6 (Clustering & Failure Detection)**: Multi-node cluster failure detection, heartbeat probes, and dynamic membership churn handling.
+- [x] **Milestone 6 (Benchmarking & Failure Testing)**: Standalone benchmark executable (`ringcache_bench`), monotonic latency profiling ($p50, p95, p99$), failure resilience testing (replica read fallback, node crash and restart reconnect), and automated experiment suite (`scripts/run_benchmarks.py`).
+- [ ] **Milestone 7 (Dynamic Failure Detection & Gossip)**: Decentralized heartbeat probes, dynamic ring membership churn handling, and background key re-balancing.
 
 ---
 

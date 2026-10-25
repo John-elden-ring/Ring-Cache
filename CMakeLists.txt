@@ -95,6 +95,10 @@ add_executable(ringcache_cli apps/cli_main.cpp)
 target_link_libraries(ringcache_cli PRIVATE ringcache)
 target_compile_features(ringcache_cli PRIVATE cxx_std_17)
 
+add_executable(ringcache_bench apps/bench_main.cpp)
+target_link_libraries(ringcache_bench PRIVATE ringcache)
+target_compile_features(ringcache_bench PRIVATE cxx_std_17)
+
 # Automated testing
 include(CTest)
 if(BUILD_TESTING)
