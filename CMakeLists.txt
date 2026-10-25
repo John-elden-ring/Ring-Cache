@@ -14,6 +14,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Library target
 add_library(ringcache
+    src/cache_node.cpp
+    src/cluster_router.cpp
     src/hash.cpp
     src/hash_ring.cpp
     src/lru_cache.cpp

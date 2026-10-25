@@ -64,6 +64,17 @@ public:
     /// @return The responsible node identifier, or std::nullopt if the ring is empty or key is empty.
     [[nodiscard]] std::optional<std::string> getNode(std::string_view key) const;
 
+    /// @brief Find up to count distinct physical nodes responsible for a key in clockwise ring order.
+    ///
+    /// The first node is the primary node; subsequent nodes are replica nodes.
+    /// If count exceeds the total number of physical nodes on the ring, returns all distinct nodes.
+    /// Physical nodes are never duplicated in the return list.
+    ///
+    /// @param key The cache key to route.
+    /// @param count The maximum number of distinct physical nodes to return.
+    /// @return Vector of distinct physical node IDs in clockwise order, or empty if ring or key is empty.
+    [[nodiscard]] std::vector<std::string> getNodesForKey(std::string_view key, std::size_t count) const;
+
     /// @brief Return the number of distinct physical nodes on the ring.
     [[nodiscard]] std::size_t nodeCount() const;
 

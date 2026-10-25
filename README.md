@@ -47,7 +47,7 @@ RingCache is designed around modular, decoupled components:
 2. **Virtual Nodes**: Each physical node registers multiple virtual nodes (tokens) across the ring to ensure statistically even key distribution.
 3. **Storage Engine & Eviction**: A thread-safe in-memory key-value store (`LruCache`) using an LRU (Least Recently Used) policy to discard oldest entries when capacity limits are reached.
 4. **Networking & Framing (Planned)**: A lightweight TCP server utilizing length-prefixed binary framing for request and response commands (`GET`, `SET`, `DEL`), as proposed in [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md).
-5. **Replication (Planned)**: Successor-based replication across $R$ successive nodes on the ring to preserve cache availability during transient node failures.
+5. **Multi-Node Routing & Replication**: Orchestrates in-process nodes (`ClusterRouter`) using consistent hash routing, successor replication across $R$ nodes, and replica fallback reads.
 
 ---
 
@@ -61,8 +61,8 @@ RingCache is designed around modular, decoupled components:
 | **Virtual Nodes (vnodes)** | Implemented | Configurable vnodes per physical node (default 150) for uniform key partitioning |
 | **LRU Cache Engine** | Implemented | Thread-safe `LruCache` with $O(1)$ `get`, `put`, and `remove` backed by `std::list` and `std::unordered_map` |
 | **Thread-Safe Storage** | Implemented | Mutex synchronization ensuring zero data races across concurrent reads and mutations |
+| **Multi-Node Replication** | Implemented | In-process multi-node cluster (`ClusterRouter`) with configurable successor replication factor $R$ and replica fallback read routing |
 | **TCP Protocol & Framing** | Planned | Non-blocking socket communication with length-prefixed binary commands |
-| **Multi-Node Replication** | Planned | Asynchronous / semi-synchronous successor replication |
 | **Node Failure Detection** | Planned | Heartbeat probes and dynamic ring membership updates |
 
 ---
@@ -122,8 +122,9 @@ You can also run the test executable directly to inspect individual test cases:
 - [x] **Milestone 1 (Foundation)**: Minimal CMake project skeleton, library target (`ringcache`), and automated test suite (`ringcache_tests`).
 - [x] **Milestone 2 (Consistent Hashing)**: Consistent hashing ring implementation with virtual node distribution and automated test verification.
 - [x] **Milestone 3 (Storage Engine)**: In-memory LRU cache engine (`LruCache`) with $O(1)$ operations, capacity bounding, and verified thread safety.
-- [ ] **Milestone 4 (Networking & Framing)**: Network transport layer, binary framing, CLI client, and server executable.
-- [ ] **Milestone 5 (Clustering & Replication)**: Multi-node clustering, replication factor, and node membership churn handling.
+- [x] **Milestone 4 (Cluster Routing & Replication)**: In-process multi-node cluster router (`ClusterRouter`, `CacheNode`), consistent hash routing with configurable successor replication factor $R$, and fallback reads.
+- [ ] **Milestone 5 (Networking & Framing)**: Network transport layer, binary framing, CLI client, and server executable.
+- [ ] **Milestone 6 (Clustering & Failure Detection)**: Multi-node cluster failure detection, heartbeat probes, and dynamic membership churn handling.
 
 ---
 

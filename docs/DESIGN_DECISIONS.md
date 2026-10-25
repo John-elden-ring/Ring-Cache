@@ -88,21 +88,24 @@ This document records the architectural decisions, trade-offs, alternatives cons
 
 ## ADR-005: Multi-Node Replication Strategy
 
-- **Status**: Proposed
-- **Context**: In-memory nodes may fail or restart. To prevent total data loss and maintain cache availability, keys can be replicated across multiple nodes on the ring.
-- **Proposed Decision**: Support successor-node replication with a configurable replication factor $R$ (e.g., $R=2$ or $R=3$).
-  - For a key, the primary node is the first node encountered on the ring; the replicas are the next $R-1$ distinct *physical* nodes following clockwise.
-  - Writes are sent to the primary node and asynchronously or semi-synchronously propagated to replicas.
+- **Status**: Accepted
+- **Context**: In-memory nodes may fail, experience LRU eviction pressure, or restart. To prevent total data loss and maintain cache availability, keys can be replicated across multiple nodes on the ring.
+- **Decision**: Implement clockwise successor replication with a configurable replication factor $R$ managed by `ringcache::ClusterRouter`:
+  - **Node Selection**: Keys route to the first node on the ring (primary) and the next $R - 1$ distinct physical nodes clockwise (replicas).
+  - **Deduplication Invariant**: If active node count $N < R$, all $N$ distinct physical nodes are used. A physical node is never selected multiple times for the same key.
+  - **Write Semantics**: Writes (`set`) target the primary node first. If the primary succeeds, writes propagate to all replicas. Success is declared if the primary successfully stores the value. Partial writes occur when a replica fails or has capacity 0.
+  - **Read Semantics**: Primary-first read with replica fallback. If a key is missing on the primary (e.g., evicted under local memory pressure), the router falls back to replicas in clockwise order.
+  - **Delete Semantics**: Deletes (`del`) target primary and all replicas, returning true if the key was deleted from at least one node.
+  - **Limitations**: Best-effort/eventual consistency without distributed consensus (Raft/Paxos) or two-phase commit. Replicas manage their own local LRU eviction boundaries independently.
 - **Alternatives Considered**:
   - *No Replication (Cache Only)*: Treat the cluster as an ephemeral cache where misses fall back to the underlying database. Maximizes write throughput and simplicity, but leaves backend databases vulnerable to stampedes on node loss.
   - *Quorum Consensus (Dynamo-style $W + R > N$)*: Tunable consistency, but introduces complex versioning (vector clocks) and read repair overhead.
   - *Raft / Paxos State Machine Replication*: Strong linearizability, but significantly limits write performance and adds substantial coordination overhead unsuitable for transient cache workloads.
 - **Trade-offs**:
   - Successor replication provides fault tolerance against node dropouts with low coordination latency.
-  - Asynchronous replication introduces a risk of transient stale reads or data loss during sudden primary node failure.
-- **Unresolved Questions**:
-  - Should replication be asynchronous (fire-and-forget for maximum throughput) or semi-synchronous (acknowledgement required from at least one replica)?
-  - How should conflicting writes be reconciled if network partitions occur?
+  - Independent LRU evictions on primary vs. replicas can cause replicas to serve slightly stale or lingering cached data after primary eviction.
+- **Validation**:
+  - Validated in Milestone 4 unit tests: multi-node key distribution across distinct physical nodes, replication factor boundaries ($R=1$, $R>N$, $R=0$), primary loss and replica fallback, local LRU eviction behavior across replicas, and partial write handling.
 
 ---
 

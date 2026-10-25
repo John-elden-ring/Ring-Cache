@@ -1,6 +1,8 @@
 #include "ringcache/hash_ring.hpp"
 
+#include <algorithm>
 #include <mutex>
+#include <unordered_set>
 #include <utility>
 
 namespace ringcache {
@@ -84,6 +86,42 @@ std::optional<std::string> HashRing::getNode(std::string_view key) const {
     }
 
     return it->second;
+}
+
+std::vector<std::string> HashRing::getNodesForKey(std::string_view key, std::size_t count) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+
+    if (ring_.empty() || key.empty() || count == 0) {
+        return {};
+    }
+
+    const std::size_t maxNodes = std::min(count, nodeTokens_.size());
+    std::vector<std::string> result;
+    result.reserve(maxNodes);
+
+    std::unordered_set<std::string> seen;
+    const uint64_t hash = hashFn_(key);
+
+    auto it = ring_.lower_bound(hash);
+    if (it == ring_.end()) {
+        it = ring_.begin();
+    }
+
+    const auto startIt = it;
+    do {
+        if (seen.insert(it->second).second) {
+            result.push_back(it->second);
+            if (result.size() == maxNodes) {
+                break;
+            }
+        }
+        ++it;
+        if (it == ring_.end()) {
+            it = ring_.begin();
+        }
+    } while (it != startIt);
+
+    return result;
 }
 
 std::size_t HashRing::nodeCount() const {

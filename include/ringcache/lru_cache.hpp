@@ -152,6 +152,22 @@ public:
         return map_.find(key) != map_.end();
     }
 
+    /// @brief Inspect a key's value without modifying access recency order.
+    /// @param key The key to look up.
+    /// @return std::optional containing the value if found; std::nullopt if missing or capacity is 0.
+    [[nodiscard]] std::optional<Value> peek(const Key& key) const {
+        if (capacity_ == 0) {
+            return std::nullopt;
+        }
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = map_.find(key);
+        if (it == map_.end()) {
+            return std::nullopt;
+        }
+        return it->second->value;
+    }
+
     /// @brief Return the number of items currently stored in the cache.
     [[nodiscard]] std::size_t size() const {
         std::lock_guard<std::mutex> lock(mutex_);
