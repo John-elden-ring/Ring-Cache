@@ -196,3 +196,24 @@ This document records the architectural decisions, trade-offs, alternatives cons
 - **Validation**:
   - Validated with live multi-process cluster experiments across concurrency scaling ($C=1..8$), replication cost ($R=1$ vs $R=2$), and workload ratios, logged in `benchmark_results.csv`.
 
+---
+
+## ADR-010: Reusable Client Library Packaging & Public API Boundaries
+
+- **Status**: Accepted
+- **Context**: External C++ applications need to consume RingCache as a client library. The public interface must be minimal, stable, thread-safe, and free from internal server, hashing, and networking header pollution.
+- **Decision**: Decouple the reusable client library from server internals and package it using modern target-based CMake:
+  - **PIMPL Encapsulation**: The public header `<ringcache/client.hpp>` depends solely on standard C++17 library headers. Networking (`asio`), JSON serialization (`nlohmann_json`), and internal routing classes (`NetworkClusterRouter`, `HashRing`) are completely encapsulated behind a private implementation pointer.
+  - **Modular CMake Targets**: Define `ringcache_client` (exported as `RingCache::client` and `RingCache::ringcache`) and internal `ringcache_server` (exported as `RingCache::server`).
+  - **Export & Relocatable Installation**: Install headers, static libraries, and generate `RingCacheConfig.cmake`, `RingCacheConfigVersion.cmake`, and `RingCacheTargets.cmake` with zero hard-coded developer machine paths. On Windows, system socket dependencies (`ws2_32`, `mswsock`) are declared as interface libraries.
+  - **Independent Consumer Validation**: Provide a standalone consumer example project (`examples/consumer_project/`) that locates the installed package via `find_package(RingCache CONFIG REQUIRED)` and compiles/runs independently.
+  - **Conan 2 Support**: Provide a standard Conan 2 recipe (`conanfile.py`) and `test_package/` verifying package creation.
+- **Alternatives Considered**:
+  - *Monolithic Export*: Exporting the full server and daemon codebase. Rejected due to leaking server dependencies, unnecessary binary bloat for pure clients, and potential Windows socket header conflicts in consumer code.
+  - *Header-Only Client*: Exposing internal headers directly to consumers. Rejected because it exposes raw socket and Asio headers to every consuming translation unit.
+- **Trade-offs**:
+  - PIMPL introduces a single heap allocation and pointer indirection on client construction, but provides complete ABI stability, minimal compile times, and clean header boundaries.
+- **Validation**:
+  - Validated with clean local installation (`cmake --install build --prefix install_test`), standalone consumer application compilation (`consumer_app.exe`), and live end-to-end cache operations against a running daemon.
+
+

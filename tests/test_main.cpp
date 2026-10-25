@@ -11,6 +11,7 @@ std::vector<TestCase> getClusterRouterTests();
 std::vector<TestCase> getProtocolTests();
 std::vector<TestCase> getNetworkIntegrationTests();
 std::vector<TestCase> getFailureResilienceTests();
+std::vector<TestCase> getClientTests();
 } // namespace ringcache::test
 
 int main() {
@@ -36,6 +37,9 @@ int main() {
 
     const auto failureResilienceTests = ringcache::test::getFailureResilienceTests();
     allTests.insert(allTests.end(), failureResilienceTests.begin(), failureResilienceTests.end());
+
+    const auto clientTests = ringcache::test::getClientTests();
+    allTests.insert(allTests.end(), clientTests.begin(), clientTests.end());
 
     int passed = 0;
     int failed = 0;

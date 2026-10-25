@@ -7,6 +7,7 @@ add_executable(ringcache_tests
     test_protocol.cpp
     test_network_integration.cpp
     test_failure_resilience.cpp
+    test_client.cpp
 )
 
 target_link_libraries(ringcache_tests

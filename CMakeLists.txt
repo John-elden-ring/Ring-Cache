@@ -48,59 +48,157 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(nlohmann_json)
 
 
-# Library target
-add_library(ringcache
-    src/cache_node.cpp
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+# ==============================================================================
+# 1. Reusable Client Library (RingCache::client)
+# ==============================================================================
+add_library(ringcache_client
+    src/client.cpp
     src/cluster_router.cpp
     src/hash.cpp
     src/hash_ring.cpp
-    src/lru_cache.cpp
     src/network_client.cpp
     src/network_cluster_router.cpp
     src/protocol.cpp
-    src/tcp_server.cpp
-    src/tcp_session.cpp
     src/version.cpp
 )
 
-target_include_directories(ringcache
+add_library(RingCache::client ALIAS ringcache_client)
+add_library(RingCache::ringcache ALIAS ringcache_client)
+
+target_include_directories(ringcache_client
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
-target_compile_features(ringcache
+target_compile_features(ringcache_client
     PUBLIC
         cxx_std_17
 )
 
-target_link_libraries(ringcache
+target_link_libraries(ringcache_client
     PUBLIC
+        $<BUILD_INTERFACE:asio>
+        $<BUILD_INTERFACE:nlohmann_json::nlohmann_json>
+        $<$<PLATFORM_ID:Windows>:ws2_32>
+        $<$<PLATFORM_ID:Windows>:mswsock>
+)
+
+if(MSVC)
+    target_compile_options(ringcache_client PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(ringcache_client PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# ==============================================================================
+# 2. Server Engine Library (Internal / Daemon)
+# ==============================================================================
+add_library(ringcache_server
+    src/cache_node.cpp
+    src/lru_cache.cpp
+    src/tcp_server.cpp
+    src/tcp_session.cpp
+)
+
+add_library(RingCache::server ALIAS ringcache_server)
+# Alias for internal backwards compatibility
+add_library(ringcache ALIAS ringcache_server)
+
+target_include_directories(ringcache_server
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+
+target_compile_features(ringcache_server
+    PUBLIC
+        cxx_std_17
+)
+
+target_link_libraries(ringcache_server
+    PUBLIC
+        ringcache_client
         asio
         nlohmann_json::nlohmann_json
 )
 
 if(MSVC)
-    target_compile_options(ringcache PRIVATE /W4 /permissive-)
+    target_compile_options(ringcache_server PRIVATE /W4 /permissive-)
 else()
-    target_compile_options(ringcache PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(ringcache_server PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-# Executables
+# ==============================================================================
+# 3. Executables
+# ==============================================================================
 add_executable(ringcache_node apps/node_main.cpp)
-target_link_libraries(ringcache_node PRIVATE ringcache)
+target_link_libraries(ringcache_node PRIVATE ringcache_server)
 target_compile_features(ringcache_node PRIVATE cxx_std_17)
 
 add_executable(ringcache_cli apps/cli_main.cpp)
-target_link_libraries(ringcache_cli PRIVATE ringcache)
+target_link_libraries(ringcache_cli PRIVATE ringcache_client)
 target_compile_features(ringcache_cli PRIVATE cxx_std_17)
 
 add_executable(ringcache_bench apps/bench_main.cpp)
-target_link_libraries(ringcache_bench PRIVATE ringcache)
+target_link_libraries(ringcache_bench PRIVATE ringcache_client)
 target_compile_features(ringcache_bench PRIVATE cxx_std_17)
 
-# Automated testing
+# ==============================================================================
+# 4. Installation & Export Configuration
+# ==============================================================================
+# Install reusable client library and export targets
+install(TARGETS ringcache_client
+    EXPORT RingCacheTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+# Install public C++ API headers
+install(FILES
+    include/ringcache/client.hpp
+    include/ringcache/version.hpp
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/ringcache
+)
+
+# Install executable tools
+install(TARGETS ringcache_node ringcache_cli ringcache_bench
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+# Export namespaced CMake targets
+install(EXPORT RingCacheTargets
+    FILE RingCacheTargets.cmake
+    NAMESPACE RingCache::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/RingCache
+)
+
+# Package version and config generation
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/RingCacheConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RingCacheConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/RingCacheConfig.cmake"
+    INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/RingCache"
+)
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/RingCacheConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/RingCacheConfigVersion.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/RingCache
+)
+
+# ==============================================================================
+# 5. Automated Testing
+# ==============================================================================
 include(CTest)
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
+

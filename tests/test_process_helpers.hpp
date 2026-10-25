@@ -112,7 +112,11 @@ inline std::string findNodeBinary() {
         "build/ringcache_node.exe",
         "build/ringcache_node",
         "./build/ringcache_node.exe",
-        "./build/ringcache_node"
+        "./build/ringcache_node",
+        "bin/ringcache_node.exe",
+        "bin/ringcache_node",
+        "../bin/ringcache_node.exe",
+        "../bin/ringcache_node"
     };
 
     for (const auto& path : candidates) {

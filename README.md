@@ -158,6 +158,89 @@ python scripts/run_benchmarks.py --matrix --out benchmark_results.csv
 
 See [docs/BENCHMARKING.md](docs/BENCHMARKING.md) for detailed methodology, percentile calculations, and failure resilience semantics.
 
+### Consuming RingCache as a C++ Library
+
+RingCache exports a clean, self-contained, thread-safe public client library (`RingCache::client`) with zero transitive header dependencies (PIMPL pattern encapsulates all internal networking and JSON parsing).
+
+#### 1. Integration via CMake (`find_package`)
+
+In your project's `CMakeLists.txt`:
+
+```cmake
+cmake_minimum_required(VERSION 3.16)
+project(MyApplication LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+
+# Locate installed RingCache package
+find_package(RingCache CONFIG REQUIRED)
+
+add_executable(my_app main.cpp)
+target_link_libraries(my_app PRIVATE RingCache::client)
+```
+
+#### 2. C++ Application Code
+
+```cpp
+#include <ringcache/client.hpp>
+#include <iostream>
+
+int main() {
+    // Connect to cluster peers with replication factor R=2
+    ringcache::Client client("node-1=127.0.0.1:8001,node-2=127.0.0.1:8002", 2);
+
+    // Store a key-value pair
+    ringcache::ClientError err;
+    if (client.put("session:123", "{ \"user\": \"alice\" }", &err)) {
+        std::cout << "Stored session key successfully\n";
+    }
+
+    // Retrieve a key-value pair (primary-first with replica fallback)
+    auto value = client.get("session:123");
+    if (value.has_value()) {
+        std::cout << "Retrieved: " << *value << "\n";
+    }
+
+    // Delete a key
+    client.del("session:123");
+    return 0;
+}
+```
+
+#### 3. Integration via Conan 2
+
+Add RingCache to your `conanfile.txt`:
+
+```ini
+[requires]
+ringcache/0.1.0
+
+[generators]
+CMakeDeps
+CMakeToolchain
+```
+
+---
+
+### Installation & Packaging
+
+Install RingCache targets, public headers, and CMake package config files to a system or local prefix:
+
+```bash
+# Configure and build
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+
+# Install to default system location or custom prefix
+cmake --install build --prefix /usr/local
+# On Windows (custom prefix example):
+cmake --install build --prefix C:/opt/ringcache
+```
+
+An independent, standalone consumer example is provided in [examples/consumer_project/](examples/consumer_project/).
+
+---
+
 ### Testing
 Execute the automated test suite using CTest:
 
@@ -166,7 +249,7 @@ Execute the automated test suite using CTest:
 ctest --test-dir build --output-on-failure
 ```
 
-You can also run the test executable directly to inspect individual test cases (45 unit and integration tests covering consistent hashing, LRU eviction, cluster routing, bounded wire protocol, multi-process TCP networking, and failure resilience):
+You can also run the test executable directly to inspect individual test cases (48 unit, integration, and client tests covering consistent hashing, LRU eviction, cluster routing, bounded wire protocol, multi-process TCP networking, failure resilience, and the public client API):
 
 ```bash
 # Linux / macOS
@@ -178,6 +261,27 @@ You can also run the test executable directly to inspect individual test cases (
 
 ---
 
+## Versioning Policy
+
+RingCache adheres to [Semantic Versioning 2.0.0](https://semver.org/):
+- **Major (`X.y.z`)**: Incompatible API or wire protocol changes.
+- **Minor (`x.Y.z`)**: Backwards-compatible functionality and new client operations.
+- **Patch (`x.y.Z`)**: Backwards-compatible bug fixes, optimizations, and internal refactorings.
+
+While in initial development (`0.x.y`), minor versions may introduce necessary API refinements before the `1.0.0` stable release.
+
+---
+
+## Release Process
+
+1. Verify that all unit, network integration, and failure resilience tests pass cleanly on all supported platforms (`ctest --output-on-failure`).
+2. Verify that package installation and the independent consumer example build and execute cleanly (`examples/consumer_project`).
+3. Update version definitions in [CMakeLists.txt](CMakeLists.txt) and [include/ringcache/version.hpp](include/ringcache/version.hpp).
+4. Tag the release commit (e.g. `git tag -a v0.1.0 -m "Release v0.1.0"`).
+5. Generate source archive or binary distribution packages.
+
+---
+
 ## Development Roadmap
 
 - [x] **Milestone 1 (Foundation)**: Minimal CMake project skeleton, library target (`ringcache`), and automated test suite (`ringcache_tests`).
@@ -186,7 +290,14 @@ You can also run the test executable directly to inspect individual test cases (
 - [x] **Milestone 4 (Cluster Routing & Replication)**: In-process multi-node cluster router (`ClusterRouter`, `CacheNode`), consistent hash routing with configurable successor replication factor $R$, and fallback reads.
 - [x] **Milestone 5 (Networking & Multi-Process Distribution)**: TCP network transport layer, bounded JSON wire protocol, `ringcache_node` daemon process, `ringcache_cli` client tool, and `NetworkClusterRouter` with successor replication and multi-process integration tests.
 - [x] **Milestone 6 (Benchmarking & Failure Testing)**: Standalone benchmark executable (`ringcache_bench`), monotonic latency profiling ($p50, p95, p99$), failure resilience testing (replica read fallback, node crash and restart reconnect), and automated experiment suite (`scripts/run_benchmarks.py`).
-- [ ] **Milestone 7 (Dynamic Failure Detection & Gossip)**: Decentralized heartbeat probes, dynamic ring membership churn handling, and background key re-balancing.
+- [x] **Milestone 7 (Reusable C++ Library & Packaging)**: Decoupled client library (`RingCache::client`), PIMPL encapsulation of third-party dependencies, CMake package export (`find_package(RingCache CONFIG)`), Conan 2 recipe, and standalone consumer example project.
+- [ ] **Milestone 8 (Dynamic Failure Detection & Gossip)**: Decentralized heartbeat probes, dynamic ring membership churn handling, and background key re-balancing.
+
+---
+
+## License
+
+This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for complete terms and copyright notices.
 
 ---
 
@@ -196,3 +307,4 @@ Contributions are welcome. Before contributing:
 1. Review [AGENTS.md](AGENTS.md) for architectural constraints, code style, and verification guidelines.
 2. Review [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md) to understand current design decisions and open questions.
 3. Open an issue using [bug report](.github/ISSUE_TEMPLATE/bug_report.md) or [feature request](.github/ISSUE_TEMPLATE/feature_request.md) templates before proposing major architectural changes.
+

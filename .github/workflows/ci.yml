@@ -44,8 +44,18 @@ jobs:
 
       - name: Build targets
         run: |
-          cmake --build build --target ringcache ringcache_tests
+          cmake --build build
 
       - name: Execute test suite
         run: |
           ctest --test-dir build --output-on-failure
+
+      - name: Verify package installation & consumer example
+        run: |
+          cmake --install build --prefix install_test
+          cmake -B examples/consumer_project/build -S examples/consumer_project -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=${{ matrix.cc }} \
+            -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
+            -DCMAKE_PREFIX_PATH="$(pwd)/install_test"
+          cmake --build examples/consumer_project/build
